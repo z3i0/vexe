@@ -1,0 +1,26 @@
+# GitHub Code Owners
+
+# Default owners for everything
+* @z3i0
+
+# Core functionality
+/cli.js @z3i0
+/clientManager.js @z3i0
+/db.js @z3i0
+
+# Voice & voice adapter
+/voiceAdapter.js @z3i0
+
+# Utilities
+/utils.js @z3i0
+
+# Database models
+/models/ @z3i0
+
+# Documentation
+*.md @z3i0
+LICENSE @z3i0
+
+# Configuration
+package.json @z3i0
+.gitignore @z3i0
