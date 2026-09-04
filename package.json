@@ -15,7 +15,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.2",
     "debug": "^4.4.3",
     "discord.js-selfbot-v13": "^3.7.1",
@@ -28,7 +27,6 @@
     "sqlite3": "^5.0.2"
   },
   "allowScripts": {
-    "@discordjs/opus@0.10.0": true,
     "sqlite3@5.1.7": true
   }
 }
