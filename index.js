@@ -6,6 +6,7 @@ const clientManager = require('./clientManager');
 const db = require('./db');
 const fs = require('fs');
 const sodium = require('libsodium-wrappers');
+const { createAudioFilterStream, FILTER_CHOICES } = require('./audioFilter');
 
 // Initialize sodium for voice encryption/decryption
 sodium.ready.then(() => {
@@ -193,7 +194,7 @@ async function watchUserMenu() {
     validate: value => /^\d{17,19}$/.test(value.trim()) || 'Invalid User ID'
   });
 
-  let userId, selected, selfMute, selfDeaf, mimicMessages, mimicEmojis, mimicVoice, speed, accounts;
+  let userId, selected, selfMute, selfDeaf, mimicMessages, mimicEmojis, mimicVoice, speed, accounts, voiceFilterPreset = 'none';
   try {
     userId = (await userIdPrompt.run()).trim();
 
@@ -227,6 +228,14 @@ async function watchUserMenu() {
     mimicMessages = await new Toggle({ message: 'Mimic messages?', enabled: 'Yes', disabled: 'No' }).run();
     mimicEmojis = await new Toggle({ message: 'Mimic emojis?', enabled: 'Yes', disabled: 'No' }).run();
     mimicVoice = await new Toggle({ message: 'Mimic voice (Echo)?', enabled: 'Yes', disabled: 'No' }).run();
+
+    if (mimicVoice) {
+      voiceFilterPreset = await new Select({
+        name: 'voiceFilter',
+        message: 'Select Voice Filter / Equalizer (فيلتر الصوت والاكوليزير):',
+        choices: FILTER_CHOICES
+      }).run();
+    }
 
     speed = await new Select({
       name: 'speed',
@@ -290,12 +299,27 @@ async function watchUserMenu() {
 
           try {
             const player = createAudioPlayer();
-            const stream = conn.receiver.subscribe(userId, {
-              mode: 'opus',
-              end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
-            });
+            let resource;
 
-            const resource = createAudioResource(stream, { inputType: StreamType.Opus });
+            if (voiceFilterPreset === 'none') {
+              const stream = conn.receiver.subscribe(userId, {
+                mode: 'opus',
+                end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+              });
+              resource = createAudioResource(stream, { inputType: StreamType.Opus });
+            } else {
+              const stream = conn.receiver.subscribe(userId, {
+                mode: 'pcm',
+                end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+              });
+              const filterStream = createAudioFilterStream(voiceFilterPreset);
+              const filteredStream = stream.pipe(filterStream);
+              resource = createAudioResource(filteredStream, {
+                inputType: StreamType.Raw,
+                sampleRate: 48000
+              });
+            }
+
             player.play(resource);
             conn.subscribe(player);
 
@@ -312,7 +336,7 @@ async function watchUserMenu() {
               player.stop();
             });
 
-            log(`✅ ${client.user.tag}: Mirror active! (DAVE compatible)`, colors.green);
+            log(`✅ ${client.user.tag}: Mirror active! [Filter: ${voiceFilterPreset}]`, colors.green);
           } catch (e) {
             log(`❌ ${client.user.tag} mirror setup error: ${e.message}`, colors.red);
           }
@@ -849,10 +873,20 @@ async function voiceCopyMenu() {
   } catch (e) { return; }
 
   if (selected.length === 0) selected = ['all'];
+
+  let filterPreset = 'none';
+  try {
+    filterPreset = await new Select({
+      name: 'audioFilter',
+      message: 'Select Audio Filter / Equalizer effect (فيلتر الصوت والاكوليزير):',
+      choices: FILTER_CHOICES
+    }).run();
+  } catch (e) { return; }
+
   const ids = selected.includes('all') ? null : selected.map(id => parseInt(id));
   const targetAccounts = ids ? accounts.filter(a => ids.includes(a.id)) : accounts;
 
-  log(`🎙️ Voice Copying (Mirror) activated for user ${userId}...`, colors.magenta);
+  log(`🎙️ Voice Copying (Mirror) activated for user ${userId} [Filter: ${filterPreset}]...`, colors.magenta);
 
   await Promise.all(targetAccounts.map(async (account) => {
     let client = clientManager.getClientById(account.id);
@@ -885,64 +919,71 @@ async function voiceCopyMenu() {
           EndBehaviorType
         } = require('@discordjs/voice');
 
-        log(`🔍 ${client.user.tag}: Initializing mirror (Modern Engine)...`, colors.dim);
+        log(`🔍 ${client.user.tag}: Initializing mirror (Modern Engine with ${filterPreset} filter)...`, colors.dim);
 
         const startMirroring = () => {
           if (client._activeMirrorPlayer) return;
 
           try {
             const player = createAudioPlayer();
-            const receiver = conn.receiver;
+            let resource;
 
-            const { PassThrough } = require('stream');
-            const bridge = new PassThrough({ highWaterMark: 1024 * 512 });
-
-            const subscribeAndPipe = () => {
-              try {
-                const stream = conn.receiver.subscribe(userId, {
-                  mode: 'pcm',
-                  end: { behavior: EndBehaviorType.AfterInactivity, duration: 2000 }
-                });
-                stream.pipe(bridge, { end: false });
-              } catch (e) { }
-            };
-
-            const resource = createAudioResource(bridge, {
-              inputType: StreamType.Raw,
-              sampleRate: 48000
-            });
+            if (filterPreset === 'none') {
+              const stream = conn.receiver.subscribe(userId, {
+                mode: 'opus',
+                end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+              });
+              resource = createAudioResource(stream, { inputType: StreamType.Opus });
+            } else {
+              const stream = conn.receiver.subscribe(userId, {
+                mode: 'pcm',
+                end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+              });
+              const filterStream = createAudioFilterStream(filterPreset);
+              const filteredStream = stream.pipe(filterStream);
+              resource = createAudioResource(filteredStream, {
+                inputType: StreamType.Raw,
+                sampleRate: 48000
+              });
+            }
 
             player.play(resource);
             conn.subscribe(player);
 
-            subscribeAndPipe();
-            const refreshInterval = setInterval(subscribeAndPipe, 15000);
-
             client._activeMirrorPlayer = player;
-            client._activeEchoStream = null;
-            client._bridge = bridge;
 
-            const cleanup = (reason) => {
-              clearInterval(refreshInterval);
-              if (client._activeMirrorPlayer === player) {
-                player.stop();
-                bridge.destroy();
-                client._activeMirrorPlayer = null;
-                log(`🛑 ${client.user.tag}: Mirror stopped (${reason}).`, colors.yellow);
-              }
-            };
+            player.on(AudioPlayerStatus.Idle, () => {
+              if (client._activeMirrorPlayer === player) client._activeMirrorPlayer = null;
+              player.stop();
+            });
 
             player.on('error', (err) => {
               log(`❌ ${client.user.tag} mirror error: ${err.message}`, colors.red);
-              cleanup('error');
+              if (client._activeMirrorPlayer === player) client._activeMirrorPlayer = null;
+              player.stop();
             });
 
-            log(`✅ ${client.user.tag}: Mirror active! (Encrypted Relay)`, colors.green);
-
+            log(`✅ ${client.user.tag}: Mirror active! [Filter: ${filterPreset}]`, colors.green);
           } catch (e) {
             log(`❌ ${client.user.tag} mirror setup error: ${e.message}`, colors.red);
           }
         };
+
+        const { VoiceConnectionStatus } = require('@discordjs/voice');
+        conn.on(VoiceConnectionStatus.Disconnected, () => {
+          if (client._activeMirrorPlayer) client._activeMirrorPlayer.stop();
+          client._activeMirrorPlayer = null;
+        });
+
+        if (conn.receiver.speaking) {
+          conn.receiver.speaking.on('start', (uid) => {
+            if (uid === userId) startMirroring();
+          });
+        } else {
+          conn.on('speaking', (u) => {
+            if ((u.id || u) === userId) startMirroring();
+          });
+        }
 
         startMirroring();
       };

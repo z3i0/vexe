@@ -320,16 +320,34 @@ async function run(argv) {
                 EndBehaviorType
               } = require('@discordjs/voice');
 
+              const { createAudioFilterStream } = require('./audioFilter');
+              const filterPreset = options.filter || 'none';
+
               const startMirroring = () => {
                 if (client._activeMirrorPlayer) return;
                 try {
                   const player = createAudioPlayer();
-                  const stream = conn.receiver.subscribe(userId, {
-                    mode: 'opus',
-                    end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
-                  });
+                  let resource;
 
-                  const resource = createAudioResource(stream, { inputType: StreamType.Opus });
+                  if (filterPreset === 'none') {
+                    const stream = conn.receiver.subscribe(userId, {
+                      mode: 'opus',
+                      end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+                    });
+                    resource = createAudioResource(stream, { inputType: StreamType.Opus });
+                  } else {
+                    const stream = conn.receiver.subscribe(userId, {
+                      mode: 'pcm',
+                      end: { behavior: EndBehaviorType.AfterInactivity, duration: 1000 }
+                    });
+                    const filterStream = createAudioFilterStream(filterPreset);
+                    const filteredStream = stream.pipe(filterStream);
+                    resource = createAudioResource(filteredStream, {
+                      inputType: StreamType.Raw,
+                      sampleRate: 48000
+                    });
+                  }
+
                   player.play(resource);
                   conn.subscribe(player);
 
