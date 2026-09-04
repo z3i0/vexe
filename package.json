@@ -26,5 +26,9 @@
     "prism-media": "^1.3.5",
     "sequelize": "^6.37.7",
     "sqlite3": "^5.0.2"
+  },
+  "allowScripts": {
+    "@discordjs/opus@0.10.0": true,
+    "sqlite3@5.1.7": true
   }
 }
